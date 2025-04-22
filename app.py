@@ -60,7 +60,7 @@ if st.session_state.page == "Connect to Database":
     st.header("Azure OpenAI Settings")
     azure_endpoint   = st.text_input("Azure OpenAI Endpoint")
     azure_api_key    = st.text_input("Azure OpenAI API Key", type="password")
-    azure_api_version= st.text_input("Azure OpenAI API Version", value="2024-12-01-preview")
+    azure_api_version= "2024-12-01-preview"
 
     if st.button("Connect"):
         # 1) build DB session
