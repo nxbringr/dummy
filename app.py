@@ -52,8 +52,6 @@ def run_sql(sql: str) -> pd.DataFrame:
 # ─── Page 1: Connect to Database ────────────────────────────
 if st.session_state.page == "Connect to Database":
     st.header("Connect to Database")
-    host     = st.text_input("Host", value="localhost")
-    port     = st.text_input("Port", value="5432")
     database = st.text_input("Database")
     user     = st.text_input("Username")
     password = st.text_input("Password", type="password")
