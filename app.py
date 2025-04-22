@@ -102,7 +102,7 @@ elif not st.session_state.connected:
 
 # ─── Page 2: Query Database ─────────────────────────────────
 elif st.session_state.page == "Query Database":
-    st.header("Natural Language → SQL")
+    st.header("Query Database in Natural Language")
 
     class SQLResponse(BaseModel):
         sql: str
