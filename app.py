@@ -64,7 +64,7 @@ if st.session_state.page == "Connect to Database":
 
     if st.button("Connect"):
         # 1) build DB session
-        db_url = f"postgresql+psycopg2://{user}:{password}/4.tcp.eu.ngrok.io:15796/{database}"
+        db_url = f"postgresql+psycopg2://{user}:{password}@4.tcp.eu.ngrok.io:15796/{database}"
         try:
             engine = create_engine(db_url, future=True)
             Session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
