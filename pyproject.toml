@@ -2,6 +2,9 @@
 name = "dummy"
 version = "0.1.0"
 description = ""
+
+package-mode = false
+
 authors = [
     {name = "nxbringr",email = "bpakhi97@gmail.com"}
 ]
