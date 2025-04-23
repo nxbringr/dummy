@@ -219,6 +219,9 @@ else:
     metrics   = healthcheck_metrics()
     chart_keys= ["Web Domain","Duplicate Names","Email Verification","Leads per Company"]
 
+    fig, axes = plt.subplots(2, 2, figsize=(10, 8))
+    axes       = axes.flatten()
+
     for ax, key in zip(axes, chart_keys):
         data = metrics[key]
         total = sum(data.values())
