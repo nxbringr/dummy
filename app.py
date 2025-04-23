@@ -108,7 +108,7 @@ elif st.session_state.page == "Query Database":
         sql: str
 
     # ─── Tables to Exclude from Schema View ─────────────────────
-    SCHEMA_BLACKLIST = {"shared_leads_individual", 'shared_leads_individual_incomplete'}
+    SCHEMA_BLACKLIST = {'shared_leads_individual_incomplete'}
 
     def get_schema_str() -> str:
         """
