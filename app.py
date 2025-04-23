@@ -219,23 +219,37 @@ else:
     metrics   = healthcheck_metrics()
     chart_keys= ["Web Domain","Duplicate Names","Email Verification","Leads per Company"]
 
-    fig, axes = plt.subplots(2, 2, figsize=(10, 8))
-    axes       = axes.flatten()
-
     for ax, key in zip(axes, chart_keys):
-        data   = metrics[key]
-        total  = sum(data.values())
-        wedges,texts,autotexts = ax.pie(
+        data = metrics[key]
+        total = sum(data.values())
+    
+        # Define colors based on key and labels
+        color_map = []
+        for label in data.keys():
+            label_lower = label.lower()
+            if "missing" in label_lower or "no" in label_lower:
+                color_map.append("red")
+            elif "unverified" in label_lower:
+                color_map.append("orange")
+            elif "verified" in label_lower or "unique" in label_lower or "yes" in label_lower or "present" in label_lower or "any" in label_lower:
+                color_map.append("green")
+            else:
+                color_map.append("gray")
+    
+        wedges, texts, autotexts = ax.pie(
             data.values(),
             startangle=90,
-            autopct=lambda p: f"{p:.1f}%",
+            autopct=lambda p: f"{p:.1f}%" if p > 0 else "",
             pctdistance=0.7,
-            wedgeprops={"linewidth":0.5,"edgecolor":"white"},
-            textprops={"fontsize":8,"color":"white"}
+            colors=color_map,
+            wedgeprops={"linewidth": 0.5, "edgecolor": "white"},
+            textprops={"fontsize": 8, "color": "white"}
         )
+    
         ax.set_title(f"{key}\n(Total: {total})", fontsize=10)
         ax.axis("equal")
-        labels = [f"{k} ({v})" for k,v in data.items()]
+    
+        labels = [f"{k} ({v})" for k, v in data.items()]
         ax.legend(
             wedges, labels,
             loc="lower center",
