@@ -195,7 +195,7 @@ else:
               SUM((email_verified IS TRUE)::int) AS verified,
               SUM((email IS NOT NULL AND (email_verified=FALSE OR email_verified IS NULL))::int)
                   AS unverified
-            FROM shared_leads_individual_recently_updated
+            FROM shared_leads_individual
         """)
         m["Email Verification"] = df3.loc[0].to_dict()
 
@@ -204,7 +204,7 @@ else:
             SELECT
               company_id,
               MAX((email_verified IS TRUE)::int) AS any_verified
-            FROM shared_leads_individual_recently_updated
+            FROM shared_leads_individual
             GROUP BY company_id
         """)
         with_leads = set(lead_df['company_id'].dropna())
