@@ -1,264 +1,163 @@
-import logging
-import os
-
-import pandas as pd
+# app.py
 import streamlit as st
-import matplotlib.pyplot as plt
-from sqlalchemy import create_engine, MetaData, text
-from sqlalchemy.orm import sessionmaker
-from pydantic import BaseModel
-from dotenv import load_dotenv
-from openai import AzureOpenAI
+import pandas as pd
+import altair as alt
 
-# ─── Logging ────────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s"
+st.set_page_config(layout="wide")
+st.title("Categorical Distribution Explorer")
+
+# --- Upload & Load ---
+uploaded_file = st.file_uploader(
+    "Upload your companies data (CSV or Excel)", 
+    type=["csv", "xls", "xlsx"]
 )
-
-# ─── Streamlit Config ───────────────────────────────────────
-st.set_page_config(page_title="Database Explorer", layout="wide")
-load_dotenv()
-
-# ─── Session State Defaults ─────────────────────────────────
-if "connected" not in st.session_state:
-    st.session_state.connected = False
-    st.session_state.db_url = ""
-    st.session_state.engine = None
-    st.session_state.sessionmaker = None
-    st.session_state.tables = []
-    st.session_state.client = None
-    st.session_state.page = "Connect to Database"
-
-# ─── Sidebar Navigation ─────────────────────────────────────
-with st.sidebar:
-    st.header("Navigation")
-    choice = st.radio(
-        "Select a page:",
-        ["Connect to Database", "Query Database", "Healthcheck"]
-    )
-    st.session_state.page = choice
-
-    if not st.session_state.connected and choice != "Connect to Database":
-        st.warning("Please connect to a database first.")
-
-# ─── Helper: Run SQL and return DataFrame ────────────────────
-def run_sql(sql: str) -> pd.DataFrame:
-    with st.session_state.sessionmaker() as session:
-        result = session.execute(text(sql))
-        rows, cols = result.fetchall(), result.keys()
-    return pd.DataFrame(rows, columns=cols)
-
-# ─── Page 1: Connect to Database ────────────────────────────
-if st.session_state.page == "Connect to Database":
-    st.header("Connect to Database")
-    database = st.text_input("Database")
-    user     = st.text_input("Username")
-    password = st.text_input("Password", type="password")
-
-    st.markdown("---")
-    st.header("Azure OpenAI Settings")
-    azure_endpoint   = st.text_input("Azure OpenAI Endpoint")
-    azure_api_key    = st.text_input("Azure OpenAI API Key", type="password")
-    azure_api_version= "2024-12-01-preview"
-
-    if st.button("Connect"):
-        # 1) build DB session
-        db_url = f"postgresql+psycopg2://{user}:{password}@2.tcp.eu.ngrok.io:15747/{database}"
-        try:
-            engine = create_engine(db_url, future=True)
-            Session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
-
-            meta = MetaData()
-            meta.reflect(bind=engine)
-            tables = [t.name for t in meta.sorted_tables]
-
-            # 2) build AzureOpenAI client
-            client = AzureOpenAI(
-                api_key=azure_api_key,
-                api_version=azure_api_version,
-                azure_endpoint=azure_endpoint
-            )
-
-            # 3) store into session_state
-            st.session_state.connected    = True
-            st.session_state.db_url        = db_url
-            st.session_state.engine        = engine
-            st.session_state.sessionmaker  = Session
-            st.session_state.tables        = tables
-            st.session_state.client        = client
-
-            st.success("Connected to database and Azure OpenAI.")
-            st.subheader("Available Tables")
-            st.write(tables)
-
-        except Exception as e:
-            logging.exception("Connection failed")
-            st.error(f"Connection failed: {e}")
-
-# ─── Guard ──────────────────────────────────────────────────
-elif not st.session_state.connected:
+if not uploaded_file:
+    st.info("Please upload a CSV or Excel file to continue.")
     st.stop()
 
-# ─── Page 2: Query Database ─────────────────────────────────
-elif st.session_state.page == "Query Database":
-    st.header("Query Database in Natural Language")
+try:
+    name = uploaded_file.name.lower()
+    if name.endswith(".csv"):
+        df = pd.read_csv(uploaded_file)
+    else:
+        xls = pd.ExcelFile(uploaded_file)
+        sheet = st.selectbox("Select sheet", xls.sheet_names)
+        df = pd.read_excel(xls, sheet_name=sheet)
+except Exception as e:
+    st.error(f"Could not read data: {e}")
+    st.stop()
 
-    class SQLResponse(BaseModel):
-        sql: str
+st.success(f"Loaded `{uploaded_file.name}`: {df.shape[0]} rows × {df.shape[1]} cols")
 
-    # ─── Tables to Exclude from Schema View ─────────────────────
-    SCHEMA_BLACKLIST = {'shared_leads_individual_incomplete'}
+# --- Sidebar page selector ---
+page = st.sidebar.radio("Go to", ["Distribution", "Data Table"])
 
-    def get_schema_str() -> str:
-        """
-        Reflects the database schema and returns a textual
-        description of tables *except* those in SCHEMA_BLACKLIST.
-        """
-        meta = MetaData()
-        meta.reflect(bind=st.session_state.engine)
 
-        lines = []
-        for table in meta.sorted_tables:
-            if table.name in SCHEMA_BLACKLIST:
-                continue
-            cols = ", ".join(f"{c.name} {c.type}" for c in table.columns)
-            lines.append(f"{table.name}({cols})")
+if page == "Distribution":
+    st.header("Distribution View")
 
-        return "\n".join(lines)
-
-    def generate_sql(nl: str) -> str:
-        prompt = (
-            "You are an expert SQL assistant. Convert the user's instruction "
-            "into a single PostgreSQL SELECT query. Output only the SQL.\n\n"
-            f"Schema:\n{get_schema_str()}\n\n"
-            f"Instruction: {nl}"
-        )
-        resp = st.session_state.client.beta.chat.completions.parse(
-            model="gpt-4o",
-            messages=[{"role": "system", "content": prompt}],
-            response_format=SQLResponse,
-            temperature=0
-        )
-        return resp.choices[0].message.parsed.sql.strip()
-
-    nl_query = st.text_input(
-        "Enter your request:",
-        "Show me list of all individuals with email verified"
+    # Column selection
+    col = st.selectbox("Choose a categorical column", df.columns.tolist())
+    unique_vals = df[col].nunique(dropna=False)
+    top_n = st.slider(
+        "Show top N categories (max = all)",
+        1, unique_vals, value=min(10, unique_vals)
     )
-    if st.button("Run Query"):
-        try:
-            sql = generate_sql(nl_query)
-            df  = run_sql(sql)
-            st.subheader("Generated SQL")
-            st.code(sql, language="sql")
-            st.subheader("Results")
-            st.dataframe(df)
-        except Exception as e:
-            logging.exception("Query failed")
-            st.error(f"Error: {e}")
 
-# ─── Page 3: Healthcheck ─────────────────────────────────────
+    # Compute top-N
+    counts = df[col].fillna("<NA>").astype(str).value_counts()
+    top_counts = counts.iloc[:top_n]
+    plot_df = (
+        top_counts
+        .reset_index()
+        .rename(columns={"index": col, 0: "count"})
+    )
+    plot_df["percent"] = (plot_df["count"] / plot_df["count"].sum() * 100).round(2)
+
+    # Show table
+    st.subheader(f"Top {top_n} categories for `{col}`")
+    st.dataframe(plot_df)
+
+    # Compute mean for hue
+    mean_count = plot_df["count"].mean()
+
+    # Bar chart + heatmap hue
+    st.subheader("Distribution Chart")
+    chart = (
+        alt.Chart(plot_df)
+        .mark_bar()
+        .encode(
+            y=alt.Y(
+                f"{col}:N",
+                sort=alt.SortField(field="count", order="descending"),
+                title=col
+            ),
+            x=alt.X("count:Q", title="Count"),
+            color=alt.condition(
+                f"datum.count >= {mean_count}",
+                alt.value("#2171b5"),   # darker blue (above-mean)
+                alt.value("#deebf7")    # very light blue (below-mean)
+            ),
+            tooltip=[
+                alt.Tooltip("count:Q", title="Count"),
+                alt.Tooltip("percent:Q", title="Percentage (%)")
+            ],
+        )
+        .properties(width=800, height=400)
+        .configure_axis(labelFontSize=12, titleFontSize=14)
+        .configure_view(strokeOpacity=0)
+    )
+    st.altair_chart(chart, use_container_width=True)
+
+    # Download
+    csv = plot_df.to_csv(index=False)
+    st.download_button(
+        "Download counts + % as CSV",
+        data=csv,
+        file_name=f"{col}_value_counts.csv",
+        mime="text/csv"
+    )
 else:
-    st.header("Healthcheck Metrics")
+    st.header("Data Table View")
+    st.write(f"Dataset: {df.shape[0]} rows × {df.shape[1]} columns")
 
-    def healthcheck_metrics() -> dict[str, dict[str, int]]:
-        m = {}
+    # 1) Column selection
+    cols_to_show = st.multiselect(
+        "Select columns to display",
+        options=df.columns.tolist(),
+        default=df.columns.tolist()
+    )
+    if not cols_to_show:
+        st.warning("Pick at least one column to display.")
+        st.stop()
 
-        df1 = run_sql("""
-            SELECT
-              SUM((web_domain IS NOT NULL)::int) AS present,
-              SUM((web_domain IS NULL)::int)       AS missing
-            FROM shared_leads_company
-        """)
-        m["Web Domain"] = df1.loc[0].to_dict()
-
-        df2 = run_sql("""
-            WITH groups AS (
-              SELECT
-                name,
-                COUNT(DISTINCT regulatory_number) AS rn,
-                COUNT(DISTINCT company_number)    AS cn
-              FROM shared_leads_company
-              GROUP BY name
-            )
-            SELECT
-              SUM((rn>1 OR cn>1)::int) AS duplicates,
-              SUM((rn<=1 AND cn<=1)::int) AS unique
-            FROM groups
-        """)
-        m["Duplicate Names"] = df2.loc[0].to_dict()
-
-        df3 = run_sql("""
-            SELECT
-              SUM((email IS NULL)::int) AS no_email,
-              SUM((email_verified IS TRUE)::int) AS verified,
-              SUM((email IS NOT NULL AND (email_verified=FALSE OR email_verified IS NULL))::int)
-                  AS unverified
-            FROM shared_leads_individual
-        """)
-        m["Email Verification"] = df3.loc[0].to_dict()
-
-        total = run_sql("SELECT COUNT(*) AS cnt FROM shared_leads_company").iloc[0,0]
-        lead_df = run_sql("""
-            SELECT
-              company_id,
-              MAX((email_verified IS TRUE)::int) AS any_verified
-            FROM shared_leads_individual
-            GROUP BY company_id
-        """)
-        with_leads = set(lead_df['company_id'].dropna())
-        verified   = set(lead_df.loc[lead_df['any_verified']==1,'company_id'])
-        m["Leads per Company"] = {
-            "no_leads":        total - len(with_leads),
-            "unverified_only": len(with_leads - verified),
-            "any_verified":    len(verified)
-        }
-        return m
-
-    metrics   = healthcheck_metrics()
-    chart_keys= ["Web Domain","Duplicate Names","Email Verification","Leads per Company"]
-
-    fig, axes = plt.subplots(2, 2, figsize=(10, 8))
-    axes       = axes.flatten()
-
-    for ax, key in zip(axes, chart_keys):
-        data = metrics[key]
-        total = sum(data.values())
+    # 2) Search filter (across selected columns)
+    search = st.text_input("Filter rows by search term (applies to visible columns)")
     
-        # Define colors based on key and labels
-        color_map = []
-        for label in data.keys():
-            label_lower = label.lower()
-            if "missing" in label_lower or "no" in label_lower:
-                color_map.append("red")
-            elif "unverified" in label_lower:
-                color_map.append("orange")
-            elif "verified" in label_lower or "unique" in label_lower or "yes" in label_lower or "present" in label_lower or "any" in label_lower:
-                color_map.append("green")
-            else:
-                color_map.append("gray")
-    
-        wedges, texts, autotexts = ax.pie(
-            data.values(),
-            startangle=90,
-            autopct=lambda p: f"{p:.1f}%" if p > 0 else "",
-            pctdistance=0.7,
-            colors=color_map,
-            wedgeprops={"linewidth": 0.5, "edgecolor": "white"},
-            textprops={"fontsize": 8, "color": "white"}
+    # 3) Sort controls
+    sort_col = st.selectbox(
+        "Sort by column",
+        options=[""] + cols_to_show,
+        format_func=lambda x: "— none —" if x=="" else x
+    )
+    ascending = st.radio("Sort order", ["Ascending", "Descending"]) == "Ascending"
+
+    # Apply filtering
+    df_view = df[cols_to_show].copy()
+    if search:
+        mask = df_view.astype(str).apply(
+            lambda row: row.str.contains(search, case=False, na=False).any(),
+            axis=1
         )
-    
-        ax.set_title(f"{key}\n(Total: {total})", fontsize=10)
-        ax.axis("equal")
-    
-        labels = [f"{k} ({v})" for k, v in data.items()]
-        ax.legend(
-            wedges, labels,
-            loc="lower center",
-            bbox_to_anchor=(0.5, -0.15),
-            fontsize=8, ncol=len(data)
-        )
+        df_view = df_view[mask]
+        st.write(f"{len(df_view)} rows match “{search}”")
 
-    fig.tight_layout(pad=3, rect=[0,0.05,1,1])
-    st.pyplot(fig)
+    # Apply sorting
+    if sort_col:
+        df_view = df_view.sort_values(by=sort_col, ascending=ascending, na_position="last")
+
+    # Show the DataFrame
+    st.dataframe(df_view, use_container_width=True)
+
+    # Download filtered/sorted subset
+    fmt = st.radio("Download format", ["CSV", "Excel"])
+    if fmt == "CSV":
+        out = df_view.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "Download as CSV", 
+            data=out, 
+            file_name="data_table.csv", 
+            mime="text/csv"
+        )
+    else:
+        # Write Excel to a buffer
+        import io
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+            df_view.to_excel(writer, index=False, sheet_name="Sheet1")
+        st.download_button(
+            "Download as Excel", 
+            data=buffer.getvalue(), 
+            file_name="data_table.xlsx", 
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
