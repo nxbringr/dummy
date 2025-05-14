@@ -1,3 +1,4 @@
+# app.py
 import streamlit as st
 import pandas as pd
 import altair as alt
@@ -7,6 +8,12 @@ import io
 st.set_page_config(layout="wide")
 st.title("Categorical Distribution Explorer")
 
+# --- Load the SIC lookup once ---
+# Assumes you have a local 'sic_codes.csv' alongside your app
+sic_lookup = pd.read_csv("sic_codes.csv", dtype={"SIC_Code": str})
+sic_lookup["SIC_Code"] = sic_lookup["SIC_Code"].str.zfill(5)
+
+# --- 1. Upload & Load company data ---
 uploaded_file = st.file_uploader(
     "Upload your companies data (CSV or Excel)", 
     type=["csv", "xls", "xlsx"]
@@ -29,8 +36,10 @@ except Exception as e:
 
 st.success(f"Loaded `{uploaded_file.name}`: {df.shape[0]} rows × {df.shape[1]} cols")
 
+# --- 2. Sidebar navigation ---
 page = st.sidebar.radio("Go to", ["Distribution", "Data Table"])
 
+# --- 3A. Distribution page ---
 if page == "Distribution":
     st.header("Distribution View")
 
@@ -46,12 +55,14 @@ if page == "Distribution":
         ]
     )
 
+    # --- Build the counts series ---
     if choice == "SIC Codes (unique)":
         lists = df["sic_codes"].dropna().astype(str).apply(ast.literal_eval)
-        exploded = lists.explode()
+        exploded = lists.explode().astype(str).str.zfill(5)
         counts = exploded.value_counts()
     elif choice == "SIC Codes (original)":
-        counts = df["sic_codes"].fillna("<NA>").astype(str).value_counts()
+        codes = df["sic_codes"].fillna("<NA>").astype(str)
+        counts = codes.value_counts()
     else:
         col_map = {
             "Country": "registered_office_address.country",
@@ -62,23 +73,40 @@ if page == "Distribution":
         col = col_map[choice]
         counts = df[col].fillna("<NA>").astype(str).value_counts()
 
+    # --- Top-N slider & slice ---
     max_vals = len(counts)
-    top_n = st.slider("Show top N categories", 1, max_vals, value=min(10, max_vals))
+    top_n = st.slider("Show top N categories", 1, max_vals, min(10, max_vals))
     top_counts = counts.iloc[:top_n]
 
+    # --- Build plot_df ---
     plot_df = top_counts.reset_index()
     plot_df.columns = ["category", "count"]
-    plot_df["category"] = plot_df["category"].astype(str)
-    plot_df["count"] = plot_df["count"].astype(int)
     plot_df["percent"] = (plot_df["count"] / plot_df["count"].sum() * 100).round(2)
 
+    # --- If SIC view, merge in descriptions ---
+    if choice.startswith("SIC Codes"):
+        plot_df = (
+            plot_df
+            .merge(
+                sic_lookup,
+                left_on="category",
+                right_on="SIC_Code",
+                how="left"
+            )
+            .drop(columns=["SIC_Code"])
+            .rename(columns={"Description": "SIC_Description"})
+        )
+
+    # --- Empty check ---
     if plot_df.empty:
         st.warning("No data to display for this selection.")
         st.stop()
 
+    # --- Table display ---
     st.subheader(f"Top {top_n} of `{choice}`")
     st.dataframe(plot_df)
 
+    # --- Chart ---
     mean_count = plot_df["count"].mean()
     st.subheader("Distribution Chart")
     chart = (
@@ -108,6 +136,7 @@ if page == "Distribution":
     )
     st.altair_chart(chart, use_container_width=True)
 
+    # --- Download CSV ---
     csv = plot_df.to_csv(index=False)
     st.download_button(
         "Download counts + % as CSV",
@@ -116,6 +145,7 @@ if page == "Distribution":
         mime="text/csv"
     )
 
+# --- 3B. Data Table page ---
 else:
     st.header("Data Table View")
     st.write(f"Dataset: {df.shape[0]} rows × {df.shape[1]} columns")
@@ -148,7 +178,9 @@ else:
         st.write(f"{len(df_view)} rows match '{search}'")
 
     if sort_col:
-        df_view = df_view.sort_values(by=sort_col, ascending=ascending, na_position="last")
+        df_view = df_view.sort_values(
+            by=sort_col, ascending=ascending, na_position="last"
+        )
 
     st.dataframe(df_view, use_container_width=True)
 
